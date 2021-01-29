@@ -32,34 +32,6 @@ remove_keys = ['driver.version.internal', 'driver.version.usb', 'ups.beeper.stat
 tag_keys = ['battery.type', 'device.model', 'device.serial', 'driver.version', 'driver.version.data', 'device.mfr',
             'device.type', 'ups.mfr', 'ups.model', 'ups.productid', 'ups.serial', 'ups.vendorid']
 
-print("Connecting to InfluxDB host:{}, DB:{}".format(host, dbname))
-client = InfluxDBClient(host, port, username, password, dbname)
-client.create_database(dbname)
-if client:
-    print("Connected successfully to InfluxDB")
-
-if verbose:
-    print("INFLUXDB_PORT: ", port)
-    print("INFLUXDB_HOST: ", host)
-    print("INFLUXDB_DATABASE: ", dbname)
-    print("INFLUXDB_USER: ", username)
-    # Not really safe to just print it. Feel free to uncomment this if you really need it
-    # print("INFLUXDB_PASSWORD: ", password)
-
-    print("NUT_HOST: ", nut_host)
-    print("NUT_PORT: ", nut_port)
-    print("NUT_USER: ", nut_username)
-    # Same as above
-    # print("NUT_PASS: ", nut_password)
-    print("UPS_NAME", ups_name)
-    print("INTERVAL: ", interval)
-    print("VERBOSE: ", verbose)
-
-print("Connecting to NUT host {}:{}".format(nut_host, nut_port))
-ups_client = PyNUTClient(host=nut_host, port=nut_port, login=nut_username, password=nut_password, debug=verbose)
-if ups_client:
-    print("Connected successfully to NUT")
-
 
 def convert_to_type(s):
     """ A function to convert a str to either integer or float. If neither, it will return the str. """
@@ -104,18 +76,54 @@ def construct_object(data):
     return result
 
 
-# Main infinite loop: Get the data from NUT every interval and send it to InfluxDB.
-while True:
-    ups_data = ups_client.list_vars(ups_name)
+def main():
+    print("Connecting to InfluxDB host:{}, DB:{}".format(host, dbname))
 
-    json_body = construct_object(ups_data)
+    client = InfluxDBClient(host, port, username, password, dbname)
+    client.create_database(dbname)
 
-    if verbose:
-        print(json_body)
-
-    write_result = client.write_points(json_body)
+    print("Connected successfully to InfluxDB")
 
     if verbose:
-        print(write_result)
+        print("INFLUXDB_PORT: ", port)
+        print("INFLUXDB_HOST: ", host)
+        print("INFLUXDB_DATABASE: ", dbname)
+        print("INFLUXDB_USER: ", username)
+        # Not really safe to just print it. Feel free to uncomment this if you really need it
+        # print("INFLUXDB_PASSWORD: ", password)
 
-    time.sleep(interval)
+        print("NUT_HOST: ", nut_host)
+        print("NUT_PORT: ", nut_port)
+        print("NUT_USER: ", nut_username)
+        # Same as above
+        # print("NUT_PASS: ", nut_password)
+
+        print("UPS_NAME", ups_name)
+        print("INTERVAL: ", interval)
+        print("VERBOSE: ", verbose)
+
+    print("Connecting to NUT host {}:{}".format(nut_host, nut_port))
+
+    ups_client = PyNUTClient(host=nut_host, port=nut_port, login=nut_username, password=nut_password, debug=verbose)
+
+    print("Connected successfully to NUT")
+
+    # Main infinite loop: Get the data from NUT every interval and send it to InfluxDB.
+    while True:
+        ups_data = ups_client.list_vars(ups_name)
+
+        json_body = construct_object(ups_data)
+
+        if verbose:
+            print(json_body)
+
+        write_result = client.write_points(json_body)
+
+        if verbose:
+            print(write_result)
+
+        time.sleep(interval)
+
+
+if __name__ == '__main__':
+    main()
