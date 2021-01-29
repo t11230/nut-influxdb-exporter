@@ -1,29 +1,36 @@
 #!/usr/bin/python
 import os
 import time
-import traceback
+from typing import Optional
 
-from nut2 import PyNUTClient
 from influxdb import InfluxDBClient
+from nut2 import PyNUTClient
 
 # InfluxDB details
-dbname = os.getenv('INFLUXDB_DATABASE', 'nutupstest')
-username = os.getenv('INFLUXDB_USER')
-password = os.getenv('INFLUXDB_PASSWORD')
-host = os.getenv('INFLUXDB_HOST', '127.0.0.1')
-port = os.getenv('INFLUXDB_PORT', 8086)
+dbname = os.getenv('INFLUXDB_DATABASE', 'nutupstest')  # type: str
+username = os.getenv('INFLUXDB_USER')  # type: Optional[str]
+password = os.getenv('INFLUXDB_PASSWORD')  # type: Optional[str]
+host = os.getenv('INFLUXDB_HOST', '127.0.0.1')  # type:str
+port = int(os.getenv('INFLUXDB_PORT', 8086))  # type: int
+
 # NUT related variables
-nut_host = os.getenv('NUT_HOST', '127.0.0.1')
-nut_port = os.getenv('NUT_PORT') if os.getenv('NUT_PORT') != '' else '3493'
-nut_password = os.getenv('NUT_PASSWORD') if os.getenv('NUT_PASSWORD') != '' else None
-nut_username = os.getenv('NUT_USERNAME') if os.getenv('NUT_USERNAME') != '' else None
-nut_watts = os.getenv('WATTS') if os.getenv('WATTS') != '' else None
+nut_host = os.getenv('NUT_HOST', '127.0.0.1')  # type:str
+nut_port = int(os.getenv('NUT_PORT', 3493))  # type: int
+nut_password = os.getenv('NUT_PASSWORD')  # type: Optional[str]
+nut_username = os.getenv('NUT_USERNAME')  # type: Optional[str]
+nut_watts = os.getenv('WATTS')  # type: Optional[str]
+
 # Other vars
-interval = float(os.getenv('INTERVAL', 21))
-ups_name = os.getenv('UPS_NAME', 'UPS')
-verbose = os.getenv('VERBOSE', 'false').lower()
+interval = float(os.getenv('INTERVAL', 21))  # type: float
+ups_name = os.getenv('UPS_NAME', 'UPS')  # type: str
+verbose = os.getenv('VERBOSE', '').lower() in ['true', '1', 'y']  # type: bool
+
+# Extra keys to remove from NUT data
 remove_keys = ['driver.version.internal', 'driver.version.usb', 'ups.beeper.status', 'driver.name', 'battery.mfr.date']
-tag_keys = ['battery.type', 'device.model', 'device.serial', 'driver.version', 'driver.version.data', 'device.mfr', 'device.type', 'ups.mfr', 'ups.model', 'ups.productid', 'ups.serial', 'ups.vendorid']
+
+# NUT keys that are considered tags and not measurements
+tag_keys = ['battery.type', 'device.model', 'device.serial', 'driver.version', 'driver.version.data', 'device.mfr',
+            'device.type', 'ups.mfr', 'ups.model', 'ups.productid', 'ups.serial', 'ups.vendorid']
 
 print("Connecting to InfluxDB host:{}, DB:{}".format(host, dbname))
 client = InfluxDBClient(host, port, username, password, dbname)
@@ -31,20 +38,25 @@ client.create_database(dbname)
 if client:
     print("Connected successfully to InfluxDB")
 
-if os.getenv('VERBOSE', 'false').lower() == 'true':
-    print("INFLUXDB_DATABASE: ", dbname)
-    print("INFLUXDB_USER: ", username)
-    # print("INFLUXDB_PASSWORD: ", password)    # Not really safe to just print it. Feel free to uncomment this if you really need it
+if verbose:
     print("INFLUXDB_PORT: ", port)
     print("INFLUXDB_HOST: ", host)
+    print("INFLUXDB_DATABASE: ", dbname)
+    print("INFLUXDB_USER: ", username)
+    # Not really safe to just print it. Feel free to uncomment this if you really need it
+    # print("INFLUXDB_PASSWORD: ", password)
+
+    print("NUT_HOST: ", nut_host)
+    print("NUT_PORT: ", nut_port)
     print("NUT_USER: ", nut_username)
+    # Same as above
     # print("NUT_PASS: ", nut_password)
     print("UPS_NAME", ups_name)
     print("INTERVAL: ", interval)
     print("VERBOSE: ", verbose)
 
 print("Connecting to NUT host {}:{}".format(nut_host, nut_port))
-ups_client = PyNUTClient(host=nut_host, port=nut_port, login=nut_username, password=nut_password, debug=(verbose == 'true'))
+ups_client = PyNUTClient(host=nut_host, port=nut_port, login=nut_username, password=nut_password, debug=verbose)
 if ups_client:
     print("Connected successfully to NUT")
 
@@ -62,13 +74,11 @@ def convert_to_type(s):
             return s
 
 
-def construct_object(data, remove_keys, tag_keys):
+def construct_object(data):
     """
     Constructs NUT data into  an object that can be sent directly to InfluxDB
 
     :param data: data received from NUT
-    :param remove_keys: some keys which are considered superfluous
-    :param tag_keys: some keys that are actually considered tags and not measurements
     :return:
     """
     fields = {}
@@ -81,7 +91,7 @@ def construct_object(data, remove_keys, tag_keys):
             else:
                 fields[k] = convert_to_type(v)
 
-    watts = float(nut_watts) if nut_watts else float(fields['ups.realpower.nominal'])
+    watts = float(nut_watts if nut_watts else fields['ups.realpower.nominal'])
     fields['watts'] = watts * 0.01 * fields['ups.load']
 
     result = [
@@ -96,27 +106,16 @@ def construct_object(data, remove_keys, tag_keys):
 
 # Main infinite loop: Get the data from NUT every interval and send it to InfluxDB.
 while True:
-    try:
-        ups_data = ups_client.list_vars(ups_name)
-    except:
-        tb = traceback.format_exc()
-        if verbose == 'true':
-            print(tb)
-        print("Error getting data from NUT")
-        exit(1)
+    ups_data = ups_client.list_vars(ups_name)
 
-    json_body = construct_object(ups_data, remove_keys, tag_keys)
+    json_body = construct_object(ups_data)
 
-    try:
-        if verbose == 'true':
-            print(json_body)
-            print(client.write_points(json_body))
-        else:
-            client.write_points(json_body)
-    except:
-        tb = traceback.format_exc()
-        if verbose == 'true':
-            print(tb)
-        print("Error connecting to InfluxDB.")
-        exit(2)
+    if verbose:
+        print(json_body)
+
+    write_result = client.write_points(json_body)
+
+    if verbose:
+        print(write_result)
+
     time.sleep(interval)
