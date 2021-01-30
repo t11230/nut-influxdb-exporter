@@ -1,17 +1,17 @@
 #!/usr/bin/python
 import os
 import time
-from typing import Optional
+from typing import List, Optional
 
 from influxdb import InfluxDBClient
 from nut2 import PyNUTClient
 
 # InfluxDB details
-dbname = os.getenv('INFLUXDB_DATABASE', 'nutupstest')  # type: str
-username = os.getenv('INFLUXDB_USER')  # type: Optional[str]
-password = os.getenv('INFLUXDB_PASSWORD')  # type: Optional[str]
-host = os.getenv('INFLUXDB_HOST', '127.0.0.1')  # type:str
-port = int(os.getenv('INFLUXDB_PORT', 8086))  # type: int
+influx_dbname = os.getenv('INFLUXDB_DATABASE', 'nutupstest')  # type: str
+influx_username = os.getenv('INFLUXDB_USER')  # type: Optional[str]
+influx_password = os.getenv('INFLUXDB_PASSWORD')  # type: Optional[str]
+influx_host = os.getenv('INFLUXDB_HOST', '127.0.0.1')  # type:str
+influx_port = int(os.getenv('INFLUXDB_PORT', 8086))  # type: int
 
 # NUT related variables
 nut_host = os.getenv('NUT_HOST', '127.0.0.1')  # type:str
@@ -22,7 +22,7 @@ nut_watts = os.getenv('WATTS')  # type: Optional[str]
 
 # Other vars
 interval = float(os.getenv('INTERVAL', 21))  # type: float
-ups_name = os.getenv('UPS_NAME', 'UPS')  # type: str
+ups_names = os.getenv('UPS_NAME', 'UPS').split(',')  # type: List[str]
 verbose = os.getenv('VERBOSE', '').lower() in ['true', '1', 'y']  # type: bool
 
 # Extra keys to remove from NUT data
@@ -77,20 +77,13 @@ def construct_object(data):
 
 
 def main():
-    print("Connecting to InfluxDB host:{}, DB:{}".format(host, dbname))
-
-    client = InfluxDBClient(host, port, username, password, dbname)
-    client.create_database(dbname)
-
-    print("Connected successfully to InfluxDB")
-
     if verbose:
-        print("INFLUXDB_PORT: ", port)
-        print("INFLUXDB_HOST: ", host)
-        print("INFLUXDB_DATABASE: ", dbname)
-        print("INFLUXDB_USER: ", username)
+        print("INFLUXDB_PORT: ", influx_port)
+        print("INFLUXDB_HOST: ", influx_host)
+        print("INFLUXDB_DATABASE: ", influx_dbname)
+        print("INFLUXDB_USER: ", influx_username)
         # Not really safe to just print it. Feel free to uncomment this if you really need it
-        # print("INFLUXDB_PASSWORD: ", password)
+        # print("INFLUXDB_PASSWORD: ", influx_password)
 
         print("NUT_HOST: ", nut_host)
         print("NUT_PORT: ", nut_port)
@@ -98,29 +91,40 @@ def main():
         # Same as above
         # print("NUT_PASS: ", nut_password)
 
-        print("UPS_NAME", ups_name)
+        print("UPS_NAME", ups_names)
         print("INTERVAL: ", interval)
         print("VERBOSE: ", verbose)
 
+    print("Connecting to InfluxDB host:{}, DB:{}".format(influx_host, influx_dbname))
+
+    influx_client = InfluxDBClient(influx_host, influx_port, influx_username, influx_password, influx_dbname)
+    influx_client.create_database(influx_dbname)
+
+    print("Connected successfully to InfluxDB")
+
     print("Connecting to NUT host {}:{}".format(nut_host, nut_port))
 
-    ups_client = PyNUTClient(host=nut_host, port=nut_port, login=nut_username, password=nut_password, debug=verbose)
+    nut_client = PyNUTClient(host=nut_host, port=nut_port, login=nut_username, password=nut_password, debug=verbose)
 
     print("Connected successfully to NUT")
 
     # Main infinite loop: Get the data from NUT every interval and send it to InfluxDB.
     while True:
-        ups_data = ups_client.list_vars(ups_name)
+        for ups_name in ups_names:
+            # Query NUT for data about this UPS
+            ups_data = nut_client.list_vars(ups_name)
 
-        json_body = construct_object(ups_data)
+            # Convert NUT data format to InfluxDB format
+            json_body = construct_object(ups_data)
 
-        if verbose:
-            print(json_body)
+            if verbose:
+                print(json_body)
 
-        write_result = client.write_points(json_body)
+            # Write the latest data to InfluxDB
+            write_result = influx_client.write_points(json_body)
 
-        if verbose:
-            print(write_result)
+            if verbose:
+                print(write_result)
 
         time.sleep(interval)
 
